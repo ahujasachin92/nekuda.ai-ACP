@@ -52,21 +52,25 @@ export class AdCPClient {
       const result = await response.json();
       if (result.error) throw new Error(`A2A: ${result.error.message}`);
 
-      // Extract from artifacts - handle both formats: part.data and part.root.data
+      // First check artifacts for data (success or error details)
       if (result.result?.artifacts) {
         for (const artifact of result.result.artifacts) {
           for (const part of artifact.parts || []) {
-            // Check both possible locations for data
             const data = part.data || part.root?.data;
             if (data) {
+              // Check if this is an error response
+              if (data.status === 'failed' || data.errors) {
+                console.log(`[AdCP A2A] Error: ${skill} - ${data.errors?.[0]?.message || 'Failed'}`);
+                throw new Error(data.errors?.[0]?.message || 'AdCP operation failed');
+              }
               console.log(`[AdCP A2A] Success: ${skill}`);
               return data;
             }
           }
         }
       }
-      
-      // Handle task responses (e.g., create_media_buy returns status.state: "submitted")
+
+      // Handle task responses without artifacts (e.g., initial submission)
       if (result.result?.status?.state) {
         console.log(`[AdCP A2A] Task ${skill}: ${result.result.status.state}`);
         return {
@@ -75,7 +79,7 @@ export class AdCPClient {
           context_id: result.result.contextId
         };
       }
-      
+
       return result.result;
     } catch (error) {
       console.log(`[AdCP A2A] ${error.message}, using mock`);
@@ -90,9 +94,10 @@ export class AdCPClient {
   async createMediaBuy({ productIds, totalBudget, flightStartDate, flightEndDate, targeting = {}, brandName = 'Demo Brand', buyerRef = null }) {
     // AdCP create_media_buy requires specific schema per v2.2.0 spec
     const ref = buyerRef || `buyer_${Date.now()}`;
-    
-    // Format dates with timezone
-    const startTime = flightStartDate ? `${flightStartDate}T00:00:00Z` : 'asap';
+
+    // Format dates - use "asap" if start date is today or in the past
+    const today = new Date().toISOString().split('T')[0];
+    const startTime = (!flightStartDate || flightStartDate <= today) ? 'asap' : `${flightStartDate}T00:00:00Z`;
     const endTime = flightEndDate ? `${flightEndDate}T23:59:59Z` : new Date(Date.now() + 30*24*60*60*1000).toISOString();
     
     return this.callA2A('create_media_buy', {
