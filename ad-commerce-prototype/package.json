@@ -1,0 +1,15 @@
+{
+  "name": "ad-commerce-prototype",
+  "version": "1.0.0",
+  "description": "Prototype connecting AdCP (ad buying) with ACP (checkout) for full-funnel attribution",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "demo": "node src/demo.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.0"
+  }
+}

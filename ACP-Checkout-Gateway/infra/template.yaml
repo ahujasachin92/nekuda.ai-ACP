@@ -1,0 +1,243 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: ACP Event Store - Serverless Checkout Session Management
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, staging, prod)
+  StackName:
+    Type: String
+    Default: acp-checkout-manager
+    Description: Name of the stack
+  AgentWebhookUrl:
+    Type: String
+    Description: OpenAI webhook endpoint URL
+    Default: https://openai.example.com/agentic_checkout/webhooks/order_events
+  AgentWebhookSecretKey:
+    Type: String
+    NoEcho: true
+    Default: secret_key_123
+    Description: HMAC signing key for webhook authentication
+  MerchantName:
+    Type: String
+    Default: Merchant
+    Description: Merchant name for webhook signature header
+  MerchantTermsOfUseUrl:
+    Type: String
+    Default: http://merchant.example.com/terms_of_use
+    Description: A URL pointing to the merchant's terms of use
+  MerchantPrivacyPolicyUrl:
+    Type: String
+    Default: http://merchant.example.com/privacy
+    Description: A URL pointing to the merchant's privacy policy
+  MerchantShopPolicies:
+    Type: String
+    Default: http://merchant.example.com/policies
+    Description: A URL pointing to the merchant's shop policies
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        NODE_ENV: !Ref Environment
+
+Resources:
+  # DynamoDB Table
+  SessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${StackName}-${Environment}-sessions"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: SessionId
+          AttributeType: S
+        - AttributeName: Version
+          AttributeType: N
+      KeySchema:
+        - AttributeName: SessionId
+          KeyType: HASH
+        - AttributeName: Version
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Idempotency tracking table
+  CreatedSessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${StackName}-${Environment}-created-sessions"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: IdempotencyKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: IdempotencyKey
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: TTL
+        Enabled: true
+
+  # Main Lambda Function - Session Manager
+  SessionManagerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${StackName}-${Environment}-session-manager"
+      CodeUri: ../
+      Handler: src/lambda.lambdaHandler
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          SESSION_HISTORY_TABLE: !Ref SessionsTable
+          IDEMPOTENCY_TABLE: !Ref CreatedSessionsTable
+          MERCHANT_TERMS_OF_USE_URL: !Ref MerchantTermsOfUseUrl
+          MERCHANT_PRIVACY_POLICY_URL: !Ref MerchantPrivacyPolicyUrl
+          MERCHANT_SHOP_POLICIES_URL: !Ref MerchantShopPolicies
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SessionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CreatedSessionsTable
+      Events:
+        CheckoutApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CheckoutAPI
+            Path: /{proxy+}
+            Method: ANY
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+        EntryPoints: 
+          - src/lambda.ts
+
+  # API Gateway with Custom Authorization
+  CheckoutAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${StackName}-${Environment}-checkout-api"
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,API-Version,Idempotency-Key,Request-Id'"
+        AllowOrigin: "'*'"
+
+
+  # Event Publisher Function (DynamoDB Streams -> SNS)
+  EventPublisherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${StackName}-${Environment}-event-publisher"
+      CodeUri: ../
+      Handler: src/eventPublisher.handler
+      Description: Publishes checkout events from DynamoDB streams to SNS
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref CheckoutEventsTopic
+      Policies:
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt CheckoutEventsTopic.TopicName
+      Events:
+        DynamoStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt SessionsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+        EntryPoints:
+          - src/eventPublisher.ts
+
+  # SNS Topic for Checkout Events
+  CheckoutEventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${StackName}-${Environment}-checkout-events"
+      DisplayName: Checkout Events Topic
+
+  # Order Notifications Function (SQS -> Webhooks)
+  OrderNotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${StackName}-${Environment}-order-notifications"
+      CodeUri: ../
+      Handler: src/webhookSenderLambda.handler
+      Description: Consumes order events from SQS and sends webhooks to OpenAI
+      Environment:
+        Variables:
+          WEBHOOK_URL: !Ref AgentWebhookUrl
+          WEBHOOK_SECRET_KEY: !Ref AgentWebhookSecretKey
+          MERCHANT_NAME: !Ref MerchantName
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt OrderUpdatesQueue.QueueName
+      Events:
+        OrderUpdates:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OrderUpdatesQueue.Arn
+            BatchSize: 10
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+        EntryPoints:
+          - src/webhookSenderLambda.ts
+
+  # SQS Queue for Order Updates and Webhook Delivery
+  OrderUpdatesQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${StackName}-${Environment}-order-updates"
+      MessageRetentionPeriod: 1209600  # 14 days
+      VisibilityTimeoutSeconds: 300
+      DeadLetterQueue:
+        TargetArn: !GetAtt OrderUpdatesDeadLetterQueue.Arn
+        MaxReceiveCount: 3
+
+  # Dead Letter Queue for failed webhook deliveries
+  OrderUpdatesDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${StackName}-${Environment}-order-updates-dlq"
+      MessageRetentionPeriod: 1209600
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL for ACP checkout API
+    Value: !Sub "https://${CheckoutAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "${StackName}-${Environment}-api-endpoint"
+
+  SessionsTableName:
+    Description: DynamoDB table name for sessions
+    Value: !Ref SessionsTable
+    Export:
+      Name: !Sub "${StackName}-${Environment}-sessions-table"
+
+  CheckoutEventsTopicArn:
+    Description: SNS topic ARN for checkout events
+    Value: !Ref CheckoutEventsTopic
+    Export:
+      Name: !Sub "${StackName}-${Environment}-checkout-events-topic"
+
+  OrderUpdatesQueueUrl:
+    Description: SQS queue URL for order updates
+    Value: !Ref OrderUpdatesQueue
+    Export:
+      Name: !Sub "${StackName}-${Environment}-order-updates-queue"

@@ -1,0 +1,20 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/sachinahuja/Personal_AI_learning/nekuda.ai - agent commerce/logs/.1e88299427e6a053de0b881ae3f0d37f9cac5dc5-audit.json",
+    "files": [
+        {
+            "date": 1769906063941,
+            "name": "/Users/sachinahuja/Personal_AI_learning/nekuda.ai - agent commerce/logs/mcp-puppeteer-2026-02-01.log",
+            "hash": "198b3208e43ea9d093d345357676d16fcf04bdcf24aea62acb3b011aac18914f"
+        },
+        {
+            "date": 1770060675010,
+            "name": "/Users/sachinahuja/Personal_AI_learning/nekuda.ai - agent commerce/logs/mcp-puppeteer-2026-02-02.log",
+            "hash": "ebdc80ad80c3e3ccd310169f2a9afbcf3e0f882fac736f61a9904b18fb2cc529"
+        }
+    ],
+    "hashType": "sha256"
+}

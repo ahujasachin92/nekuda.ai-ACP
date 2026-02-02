@@ -1,0 +1,47 @@
+{
+  "name": "acp-checkout-manager",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "npx esbuild src/lambda.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/lambda.cjs",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/local.ts",
+    "dev:local": "env $(cat .env.local | grep -v '^#' | xargs) tsx src/local.ts",
+    "docker:up": "docker-compose -f docker-compose.local.yml up -d",
+    "docker:down": "docker-compose -f docker-compose.local.yml down",
+    "setup:local": "chmod +x scripts/setup-local-dynamodb.sh && ./scripts/setup-local-dynamodb.sh",
+    "spec:check": "./scripts/spec-check.sh",
+    "spec:pull": "./scripts/spec-pull.sh",
+    "spec:generate": "./scripts/spec-generate.sh",
+    "spec:update": "npm run spec:pull && npm run spec:generate"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.155",
+    "@types/node": "^24.7.0",
+    "jq": "^1.7.2",
+    "json-schema-to-typescript": "^15.0.4",
+    "openapi-typescript": "^7.9.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.901.0",
+    "@aws-sdk/client-apigatewayv2": "^3.901.0",
+    "@aws-sdk/client-dynamodb": "^3.902.0",
+    "@aws-sdk/client-lambda": "^3.901.0",
+    "@aws-sdk/client-sns": "^3.901.0",
+    "@aws-sdk/client-sqs": "^3.901.0",
+    "@aws-sdk/lib-dynamodb": "^3.902.0",
+    "@types/express": "^5.0.3",
+    "esbuild": "^0.25.10",
+    "express": "^5.1.0",
+    "serverless-http": "^4.0.0",
+    "stripe": "^20.3.0"
+  }
+}
