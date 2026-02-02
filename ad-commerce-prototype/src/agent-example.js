@@ -10,7 +10,10 @@
  */
 
 import express from 'express';
-import { spawn } from 'child_process';
+import { exec } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { config } from './config.js';
 import { adcpClient } from './services/adcp-client.js';
 import { acpClient } from './services/acp-client.js';
@@ -153,121 +156,125 @@ async function callLLM(systemPrompt, messages, tools) {
  * No API key required - authenticates through your existing Claude login
  */
 async function callClaudeCLI(systemPrompt, messages, tools) {
-  // Build a prompt that includes tool definitions and asks for structured output
+  // Build compact tool descriptions
   const toolDescriptions = tools.map(t => {
-    const params = t.input_schema?.properties || {};
-    const required = t.input_schema?.required || [];
-    const paramDesc = Object.entries(params)
-      .map(([name, schema]) => `    - ${name}${required.includes(name) ? ' (required)' : ''}: ${schema.description || schema.type}`)
-      .join('\n');
-    return `${t.name}: ${t.description}\n  Parameters:\n${paramDesc || '    (none)'}`;
-  }).join('\n\n');
+    const params = Object.entries(t.input_schema?.properties || {})
+      .map(([name, schema]) => `${name}: ${schema.type}`)
+      .join(', ');
+    return `- ${t.name}(${params}): ${t.description}`;
+  }).join('\n');
 
-  // Convert conversation history to text
-  const conversationText = messages.map(m => {
-    if (m.role === 'user') {
-      if (Array.isArray(m.content)) {
-        const toolResult = m.content.find(c => c.type === 'tool_result');
-        if (toolResult) {
-          return `[Tool Result]: ${toolResult.content}`;
-        }
+  // Get just the last user message for simpler prompt
+  const lastMessage = messages[messages.length - 1];
+  let userInput = '';
+
+  if (lastMessage.role === 'user') {
+    if (Array.isArray(lastMessage.content)) {
+      const toolResult = lastMessage.content.find(c => c.type === 'tool_result');
+      if (toolResult) {
+        userInput = `Previous tool result: ${toolResult.content}`;
       }
-      return `User: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`;
-    } else if (m.role === 'assistant') {
-      if (Array.isArray(m.content)) {
-        const text = m.content.find(c => c.type === 'text');
-        const toolUse = m.content.find(c => c.type === 'tool_use');
-        let result = '';
-        if (text) result += text.text;
-        if (toolUse) result += `\n[Called tool: ${toolUse.name} with ${JSON.stringify(toolUse.input)}]`;
-        return `Assistant: ${result}`;
-      }
-      return `Assistant: ${m.content}`;
+    } else {
+      userInput = lastMessage.content;
     }
-    return '';
-  }).join('\n\n');
+  }
+
+  // Build context from prior messages (condensed)
+  const priorContext = messages.slice(0, -1).map(m => {
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      const toolUse = m.content.find(c => c.type === 'tool_use');
+      if (toolUse) return `[Used ${toolUse.name}]`;
+    }
+    return null;
+  }).filter(Boolean).join(' → ');
 
   const fullPrompt = `${systemPrompt}
 
-AVAILABLE TOOLS:
+Tools available:
 ${toolDescriptions}
 
-IMPORTANT: When you want to use a tool, respond with ONLY a JSON block in this exact format:
-\`\`\`tool_call
-{"tool": "tool_name", "input": {"param1": "value1"}}
-\`\`\`
+${priorContext ? `Context: ${priorContext}\n` : ''}
+User request: ${userInput}
 
-When you're done and want to give a final response (no more tool calls needed), just respond normally with text.
+If you need to use a tool, respond with ONLY this JSON format (no other text):
+{"tool": "tool_name", "input": {"param": "value"}}
 
-CONVERSATION:
-${conversationText}
-
-Now respond. If you need to use a tool, output the tool_call JSON block. Otherwise, provide your final answer.`;
+If you're done (no tool needed), just give your final text answer.`;
 
   return new Promise((resolve, reject) => {
-    console.log('[Claude CLI] Spawning claude process...');
+    console.log('[Claude CLI] Calling claude...');
+    console.log('[Claude CLI] Prompt length:', fullPrompt.length);
 
-    const claude = spawn('claude', ['-p', fullPrompt, '--no-tools'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env }
-    });
+    // Write prompt to temp file to avoid shell escaping issues
+    const tempFile = join(tmpdir(), `claude_prompt_${Date.now()}.txt`);
+    writeFileSync(tempFile, fullPrompt);
 
-    let stdout = '';
-    let stderr = '';
+    const cmd = `cat "${tempFile}" | claude -p --tools ""`;
 
-    claude.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
+    exec(cmd, { timeout: 90000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      // Clean up temp file
+      try { unlinkSync(tempFile); } catch (e) {}
 
-    claude.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    claude.on('close', (code) => {
-      if (code !== 0 && !stdout) {
-        console.error('[Claude CLI] Error:', stderr);
-        reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
+      if (error && !stdout) {
+        console.error('[Claude CLI] Error:', error.message);
+        reject(new Error(`Claude CLI error: ${error.message}`));
         return;
       }
 
-      console.log('[Claude CLI] Response received, length:', stdout.length);
+      console.log('[Claude CLI] Response:', stdout.substring(0, 200));
 
-      // Check if response contains a tool call
-      const toolCallMatch = stdout.match(/```tool_call\s*\n?([\s\S]*?)\n?```/);
+      const trimmed = stdout.trim();
 
+      // Check for JSON object at start (tool call)
+      if (trimmed.startsWith('{') && trimmed.includes('"tool"')) {
+        try {
+          const toolCall = JSON.parse(trimmed);
+          if (toolCall.tool) {
+            console.log('[Claude CLI] Tool call:', toolCall.tool);
+            resolve({
+              stop_reason: 'tool_use',
+              content: [{
+                type: 'tool_use',
+                id: `cli_${Date.now()}`,
+                name: toolCall.tool,
+                input: toolCall.input || {}
+              }]
+            });
+            return;
+          }
+        } catch (e) {
+          // Not valid JSON, treat as text
+        }
+      }
+
+      // Check for ```tool_call or ```json block
+      const toolCallMatch = trimmed.match(/```(?:tool_call|json)?\s*\n?([\s\S]*?)\n?```/);
       if (toolCallMatch) {
         try {
           const toolCall = JSON.parse(toolCallMatch[1].trim());
-          console.log('[Claude CLI] Tool call detected:', toolCall.tool);
-
-          resolve({
-            stop_reason: 'tool_use',
-            content: [{
-              type: 'tool_use',
-              id: `cli_tool_${Date.now()}`,
-              name: toolCall.tool,
-              input: toolCall.input || {}
-            }]
-          });
-        } catch (parseError) {
-          console.error('[Claude CLI] Failed to parse tool call:', parseError);
-          // Treat as regular text response
-          resolve({
-            stop_reason: 'end_turn',
-            content: [{ type: 'text', text: stdout.trim() }]
-          });
+          if (toolCall.tool) {
+            console.log('[Claude CLI] Tool call from block:', toolCall.tool);
+            resolve({
+              stop_reason: 'tool_use',
+              content: [{
+                type: 'tool_use',
+                id: `cli_${Date.now()}`,
+                name: toolCall.tool,
+                input: toolCall.input || {}
+              }]
+            });
+            return;
+          }
+        } catch (e) {
+          // Not valid tool call
         }
-      } else {
-        // Regular text response - agent is done
-        resolve({
-          stop_reason: 'end_turn',
-          content: [{ type: 'text', text: stdout.trim() }]
-        });
       }
-    });
 
-    claude.on('error', (err) => {
-      reject(new Error(`Failed to spawn claude CLI: ${err.message}. Make sure 'claude' is installed and in PATH.`));
+      // Regular text response
+      resolve({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: trimmed }]
+      });
     });
   });
 }
