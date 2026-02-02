@@ -11,6 +11,7 @@
 
 import express from 'express';
 import { exec } from 'child_process';
+import { createHmac } from 'crypto';
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -21,6 +22,240 @@ import { attributionService } from './services/attribution.js';
 
 const app = express();
 app.use(express.json());
+
+// ============================================================================
+// CORS
+// ============================================================================
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// ============================================================================
+// HEALTH CHECK
+// ============================================================================
+app.get('/health', async (req, res) => {
+  const acpHealth = await acpClient.health().catch(() => ({ status: 'error' }));
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    mode: 'unified-agent',
+    llm: LLM_PROVIDER,
+    services: {
+      agent: 'ok',
+      acp: acpHealth.status || 'error',
+      adcp: 'check /adcp/products'
+    }
+  });
+});
+
+// ============================================================================
+// GET AD PRODUCTS FROM AdCP
+// ============================================================================
+app.get('/adcp/products', async (req, res) => {
+  try {
+    const brief = req.query.brief || 'display advertising';
+    const products = await adcpClient.getProducts(brief);
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// CREATE CAMPAIGN - Combines AdCP media buy with ACP products
+// ============================================================================
+app.post('/campaigns', async (req, res) => {
+  try {
+    const { name, products, adcpProductIds, budget, startDate, endDate, targeting = {} } = req.body;
+
+    const campaignId = `camp_${Date.now()}`;
+
+    // Create media buy in AdCP
+    const mediaBuy = await adcpClient.createMediaBuy({
+      productIds: adcpProductIds || ['test'],
+      totalBudget: budget / 100,
+      flightStartDate: startDate,
+      flightEndDate: endDate,
+      targeting,
+      brandName: name
+    });
+
+    const mediaBuyStatus = mediaBuy.status || 'submitted';
+    const mediaBuyId = mediaBuy.media_buy_id || `pending_${Date.now()}`;
+
+    // Create tracking URLs
+    const trackingUrls = products.map(sku => ({
+      sku,
+      clickUrl: `${config.orchestrator.baseUrl}/click/${campaignId}/${sku}`,
+      checkoutUrl: `${config.acp.baseUrl}/checkout?campaign=${campaignId}&product=${sku}`
+    }));
+
+    attributionService.setCampaignSpend(campaignId, budget);
+
+    res.status(201).json({
+      id: campaignId,
+      name,
+      products,
+      budget,
+      budgetFormatted: `$${(budget / 100).toFixed(2)}`,
+      startDate,
+      endDate,
+      targeting,
+      trackingUrls,
+      adcp: { media_buy_id: mediaBuyId, status: mediaBuyStatus, estimated_impressions: mediaBuy.estimated_impressions || Math.round(budget * 2) },
+      createdAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// AD CLICK TRACKING - Records click and redirects to checkout
+// ============================================================================
+app.get('/click/:campaignId/:productId', async (req, res) => {
+  const { campaignId, productId } = req.params;
+  const userId = req.query.uid || 'anonymous';
+
+  const click = attributionService.recordClick({
+    campaignId,
+    productId,
+    creativeId: req.query.creative || 'default',
+    userId
+  });
+
+  try {
+    const session = await acpClient.createCheckoutSession({
+      items: [{ id: productId, quantity: 1 }],
+      campaignId,
+      clickId: click.clickId
+    });
+
+    const checkoutUrl = `${config.acp.baseUrl}/checkout_sessions/${session.id}`;
+
+    if (req.query.format === 'json') {
+      return res.json({ click, session, checkoutUrl });
+    }
+    res.redirect(checkoutUrl);
+  } catch (error) {
+    res.status(500).json({ error: error.message, click });
+  }
+});
+
+// ============================================================================
+// ACP WEBHOOK RECEIVER - Attribution on purchase
+// ============================================================================
+app.post('/webhooks/acp', (req, res) => {
+  const signature = req.headers['x-webhook-signature'];
+  const eventType = req.headers['x-event-type'];
+
+  const payload = JSON.stringify(req.body);
+  const hmac = createHmac('sha256', config.acp.webhookSecret);
+  hmac.update(payload);
+  const expectedSig = hmac.digest('hex');
+
+  if (signature !== expectedSig) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  if (eventType === 'checkout.session.completed' || eventType === 'order.created') {
+    const { checkout_session_id, session, order } = req.body.data;
+    const metadata = session?.metadata?.attribution || {};
+    const clickId = metadata.click_id;
+    const orderAmount = session?.totals?.find(t => t.type === 'total')?.amount || 0;
+
+    if (clickId) {
+      attributionService.recordConversion({
+        clickId,
+        orderId: order?.id || checkout_session_id,
+        orderAmount
+      });
+    }
+  }
+
+  res.json({ received: true });
+});
+
+// ============================================================================
+// CAMPAIGN STATS - Get performance + ROAS
+// ============================================================================
+app.get('/campaigns/:campaignId/stats', (req, res) => {
+  const stats = attributionService.calculateROAS(req.params.campaignId);
+  if (!stats) return res.status(404).json({ error: 'Campaign not found' });
+  res.json(stats);
+});
+
+// ============================================================================
+// ALL CAMPAIGNS STATS
+// ============================================================================
+app.get('/stats', (req, res) => {
+  const stats = attributionService.getAllCampaignStats();
+  res.json({
+    campaigns: stats,
+    summary: {
+      totalCampaigns: stats.length,
+      totalRevenue: stats.reduce((sum, s) => sum + (s?.revenue || 0), 0),
+      totalSpend: stats.reduce((sum, s) => sum + (s?.spend || 0), 0)
+    }
+  });
+});
+
+// ============================================================================
+// SIMULATE AD CLICK + PURCHASE (for testing)
+// ============================================================================
+app.post('/simulate', async (req, res) => {
+  try {
+    const { campaignId, productId, completeCheckout = true, adSpend = 10000 } = req.body;
+    const cid = campaignId || `camp_${Date.now()}`;
+    const pid = productId || 'SKU-TSHIRT-BLK-M';
+
+    attributionService.setCampaignSpend(cid, adSpend);
+
+    const click = attributionService.recordClick({
+      campaignId: cid,
+      productId: pid,
+      creativeId: 'banner_300x250',
+      userId: `user_${Math.random().toString(36).slice(2)}`
+    });
+
+    const session = await acpClient.createCheckoutSession({
+      items: [{ id: pid, quantity: 1 }],
+      campaignId: cid,
+      clickId: click.clickId
+    });
+
+    const orderAmount = session.totals?.find(t => t.type === 'total')?.amount || 0;
+    let order = null;
+    let conversion = null;
+
+    if (completeCheckout && session.id) {
+      order = await acpClient.completeCheckout(
+        session.id,
+        { type: 'card', card: { token: 'tok_visa' } },
+        { name: 'Test User', email: 'test@example.com' }
+      );
+      conversion = attributionService.recordConversion({
+        clickId: click.clickId,
+        orderId: order.order?.id || session.id,
+        orderAmount
+      });
+    }
+
+    res.json({
+      click,
+      session: { id: session.id, status: session.status, total: orderAmount },
+      order: order?.order,
+      conversion,
+      stats: attributionService.calculateROAS(cid)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ============================================================================
 // LLM PROVIDER CONFIGURATION
@@ -870,30 +1105,35 @@ app.get('/agent/demo', async (req, res) => {
 // ============================================================================
 const PORT = config.orchestrator.port;
 app.listen(PORT, () => {
-  console.log('\n' + '='.repeat(60));
-  console.log('AD-COMMERCE AGENT (AI-Powered)');
-  console.log('='.repeat(60));
-  console.log(`Agent:       http://localhost:${PORT}`);
-  console.log(`Agent Card:  http://localhost:${PORT}/.well-known/agent.json`);
-  console.log(`LLM:         ${LLM_PROVIDER} (${LLM_CONFIG[LLM_PROVIDER]?.model || 'default'})`);
-  console.log('='.repeat(60));
-  console.log('\nAgent Endpoints:');
-  console.log('  POST /agent/chat     - Natural language interaction');
-  console.log('  GET  /agent/demo     - Demo autonomous campaign creation');
-  console.log('  POST /a2a/tasks      - Receive tasks from other agents');
-  console.log('='.repeat(60));
-  console.log('\nLLM Provider Options:');
-  console.log('  1. Claude CLI (default): Uses Claude Max subscription (no API key!)');
-  console.log('  2. Claude API:           LLM_PROVIDER=claude (uses CLAUDE_API_KEY)');
-  console.log('  3. OpenAI:               LLM_PROVIDER=openai (uses OPENAI_API_KEY)');
-  console.log('  4. Gemini:               LLM_PROVIDER=gemini (uses GEMINI_API_KEY)');
-  console.log('  5. Ollama (free):        LLM_PROVIDER=ollama (local, no API key)');
-  console.log('='.repeat(60));
-  console.log('\nExample usage:');
-  console.log('  curl -X POST http://localhost:3001/agent/chat \\');
-  console.log('    -H "Content-Type: application/json" \\');
-  console.log('    -d \'{"message": "Create a $50 campaign for our hoodie"}\'');
-  console.log('='.repeat(60) + '\n');
+  console.log('\n' + '='.repeat(70));
+  console.log('  AD-COMMERCE UNIFIED AGENT (AI + Orchestrator)');
+  console.log('='.repeat(70));
+  console.log(`  Server:     http://localhost:${PORT}`);
+  console.log(`  AdCP:       ${config.adcp.baseUrl}`);
+  console.log(`  ACP:        ${config.acp.baseUrl}`);
+  console.log(`  LLM:        ${LLM_PROVIDER} (${LLM_CONFIG[LLM_PROVIDER]?.model || 'default'})`);
+  console.log('='.repeat(70));
+  console.log('\n  AI AGENT ENDPOINTS:');
+  console.log('    POST /agent/chat       - Natural language interaction');
+  console.log('    GET  /agent/demo       - Demo autonomous campaign creation');
+  console.log('    POST /a2a/tasks        - Receive tasks from other agents');
+  console.log('\n  ORCHESTRATOR ENDPOINTS:');
+  console.log('    GET  /health           - Service health check');
+  console.log('    GET  /adcp/products    - Get ad products from AdCP');
+  console.log('    POST /campaigns        - Create ad campaign');
+  console.log('    GET  /click/:cid/:sku  - Track click → checkout');
+  console.log('    POST /webhooks/acp     - Receive ACP webhooks');
+  console.log('    GET  /campaigns/:id/stats - Campaign ROAS');
+  console.log('    GET  /stats            - All campaign stats');
+  console.log('    POST /simulate         - Test full funnel');
+  console.log('='.repeat(70));
+  console.log('\n  EXAMPLE - AI Chat:');
+  console.log('    curl -X POST http://localhost:3001/agent/chat \\');
+  console.log('      -H "Content-Type: application/json" \\');
+  console.log('      -d \'{"message": "Create a $100 campaign for my hoodie"}\'');
+  console.log('\n  EXAMPLE - Direct API:');
+  console.log('    curl http://localhost:3001/adcp/products');
+  console.log('='.repeat(70) + '\n');
 });
 
 export { runAgent, autonomousOptimization };
