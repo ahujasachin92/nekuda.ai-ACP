@@ -10,6 +10,7 @@
  */
 
 import express from 'express';
+import { spawn } from 'child_process';
 import { config } from './config.js';
 import { adcpClient } from './services/adcp-client.js';
 import { acpClient } from './services/acp-client.js';
@@ -21,10 +22,14 @@ app.use(express.json());
 // ============================================================================
 // LLM PROVIDER CONFIGURATION
 // ============================================================================
-// Options: 'claude' (default), 'openai', 'gemini', 'ollama' (free local)
-const LLM_PROVIDER = process.env.LLM_PROVIDER || 'claude';
+// Options: 'claude-cli' (default, uses Claude Max), 'claude', 'openai', 'gemini', 'ollama'
+const LLM_PROVIDER = process.env.LLM_PROVIDER || 'claude-cli';
 
 const LLM_CONFIG = {
+  'claude-cli': {
+    // Uses the `claude` CLI which authenticates via Claude Max subscription
+    model: 'claude-cli'
+  },
   claude: {
     baseUrl: 'https://api.anthropic.com/v1',
     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
@@ -120,15 +125,17 @@ const agent = {
 
 /**
  * Call LLM with tools support
- * Works with Claude, OpenAI, Gemini, or Ollama (local)
+ * Works with Claude CLI, Claude API, OpenAI, Gemini, or Ollama (local)
  */
 async function callLLM(systemPrompt, messages, tools) {
   const provider = LLM_PROVIDER;
   const llmConfig = LLM_CONFIG[provider];
-  
+
   console.log(`[LLM] Using provider: ${provider}, model: ${llmConfig.model}`);
 
-  if (provider === 'claude') {
+  if (provider === 'claude-cli') {
+    return await callClaudeCLI(systemPrompt, messages, tools);
+  } else if (provider === 'claude') {
     return await callClaude(systemPrompt, messages, tools, llmConfig);
   } else if (provider === 'openai') {
     return await callOpenAI(systemPrompt, messages, tools, llmConfig);
@@ -137,8 +144,132 @@ async function callLLM(systemPrompt, messages, tools) {
   } else if (provider === 'ollama') {
     return await callOllama(systemPrompt, messages, tools, llmConfig);
   }
-  
+
   throw new Error(`Unknown LLM provider: ${provider}`);
+}
+
+/**
+ * Claude CLI - Uses your Claude Max subscription via the `claude` command
+ * No API key required - authenticates through your existing Claude login
+ */
+async function callClaudeCLI(systemPrompt, messages, tools) {
+  // Build a prompt that includes tool definitions and asks for structured output
+  const toolDescriptions = tools.map(t => {
+    const params = t.input_schema?.properties || {};
+    const required = t.input_schema?.required || [];
+    const paramDesc = Object.entries(params)
+      .map(([name, schema]) => `    - ${name}${required.includes(name) ? ' (required)' : ''}: ${schema.description || schema.type}`)
+      .join('\n');
+    return `${t.name}: ${t.description}\n  Parameters:\n${paramDesc || '    (none)'}`;
+  }).join('\n\n');
+
+  // Convert conversation history to text
+  const conversationText = messages.map(m => {
+    if (m.role === 'user') {
+      if (Array.isArray(m.content)) {
+        const toolResult = m.content.find(c => c.type === 'tool_result');
+        if (toolResult) {
+          return `[Tool Result]: ${toolResult.content}`;
+        }
+      }
+      return `User: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`;
+    } else if (m.role === 'assistant') {
+      if (Array.isArray(m.content)) {
+        const text = m.content.find(c => c.type === 'text');
+        const toolUse = m.content.find(c => c.type === 'tool_use');
+        let result = '';
+        if (text) result += text.text;
+        if (toolUse) result += `\n[Called tool: ${toolUse.name} with ${JSON.stringify(toolUse.input)}]`;
+        return `Assistant: ${result}`;
+      }
+      return `Assistant: ${m.content}`;
+    }
+    return '';
+  }).join('\n\n');
+
+  const fullPrompt = `${systemPrompt}
+
+AVAILABLE TOOLS:
+${toolDescriptions}
+
+IMPORTANT: When you want to use a tool, respond with ONLY a JSON block in this exact format:
+\`\`\`tool_call
+{"tool": "tool_name", "input": {"param1": "value1"}}
+\`\`\`
+
+When you're done and want to give a final response (no more tool calls needed), just respond normally with text.
+
+CONVERSATION:
+${conversationText}
+
+Now respond. If you need to use a tool, output the tool_call JSON block. Otherwise, provide your final answer.`;
+
+  return new Promise((resolve, reject) => {
+    console.log('[Claude CLI] Spawning claude process...');
+
+    const claude = spawn('claude', ['-p', fullPrompt, '--no-tools'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    claude.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    claude.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    claude.on('close', (code) => {
+      if (code !== 0 && !stdout) {
+        console.error('[Claude CLI] Error:', stderr);
+        reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
+        return;
+      }
+
+      console.log('[Claude CLI] Response received, length:', stdout.length);
+
+      // Check if response contains a tool call
+      const toolCallMatch = stdout.match(/```tool_call\s*\n?([\s\S]*?)\n?```/);
+
+      if (toolCallMatch) {
+        try {
+          const toolCall = JSON.parse(toolCallMatch[1].trim());
+          console.log('[Claude CLI] Tool call detected:', toolCall.tool);
+
+          resolve({
+            stop_reason: 'tool_use',
+            content: [{
+              type: 'tool_use',
+              id: `cli_tool_${Date.now()}`,
+              name: toolCall.tool,
+              input: toolCall.input || {}
+            }]
+          });
+        } catch (parseError) {
+          console.error('[Claude CLI] Failed to parse tool call:', parseError);
+          // Treat as regular text response
+          resolve({
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: stdout.trim() }]
+          });
+        }
+      } else {
+        // Regular text response - agent is done
+        resolve({
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: stdout.trim() }]
+        });
+      }
+    });
+
+    claude.on('error', (err) => {
+      reject(new Error(`Failed to spawn claude CLI: ${err.message}. Make sure 'claude' is installed and in PATH.`));
+    });
+  });
 }
 
 /**
@@ -737,7 +868,7 @@ app.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log(`Agent:       http://localhost:${PORT}`);
   console.log(`Agent Card:  http://localhost:${PORT}/.well-known/agent.json`);
-  console.log(`LLM:         ${LLM_PROVIDER} (${LLM_CONFIG[LLM_PROVIDER].model})`);
+  console.log(`LLM:         ${LLM_PROVIDER} (${LLM_CONFIG[LLM_PROVIDER]?.model || 'default'})`);
   console.log('='.repeat(60));
   console.log('\nAgent Endpoints:');
   console.log('  POST /agent/chat     - Natural language interaction');
@@ -745,10 +876,11 @@ app.listen(PORT, () => {
   console.log('  POST /a2a/tasks      - Receive tasks from other agents');
   console.log('='.repeat(60));
   console.log('\nLLM Provider Options:');
-  console.log('  1. Claude (default): Uses CLAUDE_API_KEY from .zshrc');
-  console.log('  2. OpenAI:           LLM_PROVIDER=openai (uses OPENAI_API_KEY)');
-  console.log('  3. Gemini:           LLM_PROVIDER=gemini (uses GEMINI_API_KEY)');
-  console.log('  4. Ollama (free):    LLM_PROVIDER=ollama (local, no API key)');
+  console.log('  1. Claude CLI (default): Uses Claude Max subscription (no API key!)');
+  console.log('  2. Claude API:           LLM_PROVIDER=claude (uses CLAUDE_API_KEY)');
+  console.log('  3. OpenAI:               LLM_PROVIDER=openai (uses OPENAI_API_KEY)');
+  console.log('  4. Gemini:               LLM_PROVIDER=gemini (uses GEMINI_API_KEY)');
+  console.log('  5. Ollama (free):        LLM_PROVIDER=ollama (local, no API key)');
   console.log('='.repeat(60));
   console.log('\nExample usage:');
   console.log('  curl -X POST http://localhost:3001/agent/chat \\');
