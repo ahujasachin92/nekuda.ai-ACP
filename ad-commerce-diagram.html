@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Ad-Commerce Solution Architecture</title>
+  <style>
+    body {
+      background: #1a1a2e;
+      color: #00ff88;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      padding: 20px;
+      margin: 0;
+    }
+    pre {
+      white-space: pre;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+<pre>
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           AD-COMMERCE SOLUTION ARCHITECTURE                          │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                                    ┌─────────────────┐
+                                    │    MARKETER     │
+                                    │  "I have $100   │
+                                    │   to spend"     │
+                                    └────────┬────────┘
+                                             │
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         UNIFIED AGENT (localhost:3001)                               │
+│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│  │                            AI REASONING LAYER                                 │   │
+│  │  • Understands marketing goals in natural language                           │   │
+│  │  • Creates campaign strategy (Quick Win, Value Bundle, Premium Push)         │   │
+│  │  • Uses Claude CLI (Claude Max subscription)                                 │   │
+│  └──────────────────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│  │                          ORCHESTRATION LAYER                                  │   │
+│  │  POST /campaigns      → Create campaign + media buy                          │   │
+│  │  GET  /click/:id/:sku → Track click → redirect to checkout                   │   │
+│  │  POST /webhooks/acp   → Receive purchase notifications                       │   │
+│  │  GET  /stats          → Campaign performance + ROAS                          │   │
+│  └──────────────────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
+│  │                         ATTRIBUTION SERVICE                                   │   │
+│  │  • Records clicks with UUID                                                  │   │
+│  │  • Tracks conversions within attribution window                              │   │
+│  │  • Calculates ROAS, CPA, profit                                              │   │
+│  └──────────────────────────────────────────────────────────────────────────────┘   │
+└───────────────┬─────────────────────────────────────┬───────────────────────────────┘
+                │                                     │
+                │ A2A JSON-RPC 2.0                    │ ACP Protocol
+                │ (create_media_buy)                  │ (checkout sessions)
+                ▼                                     ▼
+┌───────────────────────────────────┐   ┌───────────────────────────────────┐
+│   AdCP SALES AGENT (:8000)        │   │   ACP GATEWAY (:3000)             │
+│                                   │   │                                   │
+│  ┌─────────────────────────────┐  │   │  ┌─────────────────────────────┐  │
+│  │ Media Buy Management        │  │   │  │ Product Catalog             │  │
+│  │ • Create media buys         │  │   │  │ • SKUs & pricing            │  │
+│  │ • Package allocation        │  │   │  │ • Inventory                 │  │
+│  │ • Budget tracking           │  │   │  └─────────────────────────────┘  │
+│  └─────────────────────────────┘  │   │  ┌─────────────────────────────┐  │
+│  ┌─────────────────────────────┐  │   │  │ Checkout Sessions           │  │
+│  │ Creative Management         │  │   │  │ • Cart management           │  │
+│  │ • Upload/review creatives   │  │   │  │ • Payment processing        │  │
+│  │ • Assign to packages        │  │   │  │ • Order creation            │  │
+│  │ • Approval workflow         │  │   │  └─────────────────────────────┘  │
+│  └─────────────────────────────┘  │   │  ┌─────────────────────────────┐  │
+│  ┌─────────────────────────────┐  │   │  │ Webhooks                    │  │
+│  │ Admin UI (/admin)           │  │   │  │ • checkout.completed        │  │
+│  │ • View campaigns            │  │   │  │ • order.created             │  │
+│  │ • Approve media buys        │  │   │  └─────────────────────────────┘  │
+│  └─────────────────────────────┘  │   │                                   │
+│           │                       │   └───────────────────────────────────┘
+│  ┌────────┴────────┐              │
+│  │   PostgreSQL    │              │
+│  │  • media_buys   │              │
+│  │  • creatives    │              │
+│  │  • packages     │              │
+│  └─────────────────┘              │
+└───────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              END-TO-END FLOW                                         │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+  │ 1. PLAN  │ ───▶ │ 2. BUY   │ ───▶ │ 3. SERVE │ ───▶ │ 4. CLICK │ ───▶ │ 5. BUY   │
+  └──────────┘      └──────────┘      └──────────┘      └──────────┘      └──────────┘
+       │                 │                 │                 │                 │
+       ▼                 ▼                 ▼                 ▼                 ▼
+  ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+  │  Agent   │      │   AdCP   │      │   Ads    │      │  Agent   │      │   ACP    │
+  │ analyzes │      │ creates  │      │ display  │      │ records  │      │ checkout │
+  │ products │      │ media    │      │ creative │      │  click   │      │ session  │
+  │ & budget │      │   buy    │      │          │      │          │      │          │
+  └──────────┘      └──────────┘      └──────────┘      └──────────┘      └──────────┘
+                                                                                │
+                                                                                ▼
+  ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+  │ 10.REPORT│ ◀─── │ 9. ROAS  │ ◀─── │ 8. ATTR  │ ◀─── │ 7. HOOK  │ ◀─── │ 6. PAY   │
+  └──────────┘      └──────────┘      └──────────┘      └──────────┘      └──────────┘
+       │                 │                 │                 │                 │
+       ▼                 ▼                 ▼                 ▼                 ▼
+  ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+  │ Campaign │      │ Calculate│      │ Record   │      │   ACP    │      │  User    │
+  │ results  │      │ revenue/ │      │ convert  │      │ notifies │      │ completes│
+  │ 18.74x   │      │  spend   │      │ -ion     │      │  agent   │      │ purchase │
+  │  ROAS    │      │          │      │          │      │          │      │          │
+  └──────────┘      └──────────┘      └──────────┘      └──────────┘      └──────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              CAMPAIGN RESULTS                                        │
+├─────────────────────┬──────────┬─────────┬──────────┬──────────┬────────────────────┤
+│ Campaign            │  Budget  │ Clicks  │ Converts │ Revenue  │       ROAS         │
+├─────────────────────┼──────────┼─────────┼──────────┼──────────┼────────────────────┤
+│ Quick Win           │   $50    │   91    │    40    │ $1,144   │      22.88x        │
+│ Value Bundle        │   $30    │   56    │    25    │  $472    │      15.75x        │
+│ Premium Push        │   $20    │   36    │    15    │  $257    │      12.88x        │
+├─────────────────────┼──────────┼─────────┼──────────┼──────────┼────────────────────┤
+│ TOTAL               │  $100    │   183   │    80    │ $1,874   │      18.74x        │
+└─────────────────────┴──────────┴─────────┴──────────┴──────────┴────────────────────┘
+</pre>
+</body>
+</html>
