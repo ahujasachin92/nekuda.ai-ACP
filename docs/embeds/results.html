@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campaign Results Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06060f;
+    --bg-grid: rgba(99, 102, 241, 0.03);
+    --card-bg: rgba(15, 15, 35, 0.85);
+    --card-border: rgba(99, 102, 241, 0.12);
+    --glass: rgba(255, 255, 255, 0.03);
+    --purple: #6366f1;
+    --cyan: #06b6d4;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 40px 20px;
+    overflow-x: hidden;
+    background-image:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .dashboard {
+    width: 100%;
+    max-width: 920px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .diagram-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    text-align: center;
+    opacity: 0;
+    animation: fadeIn 0.6s ease forwards;
+  }
+  .diagram-title span { color: var(--purple); }
+
+  /* ─── Hero ROAS ─── */
+  .hero-roas {
+    text-align: center;
+    padding: 32px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 18px;
+    backdrop-filter: blur(12px);
+    position: relative;
+    overflow: hidden;
+    opacity: 0;
+    animation: slideUp 0.6s ease 0.2s forwards;
+  }
+  .hero-roas::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--emerald), var(--cyan), transparent);
+    animation: shimmer 3s ease-in-out infinite;
+  }
+  .hero-roas .label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .hero-roas .value {
+    font-size: 64px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    background: linear-gradient(135deg, var(--emerald), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .hero-roas .subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .hero-roas .subtitle strong {
+    color: var(--emerald);
+    font-weight: 600;
+  }
+
+  /* ─── Summary Row ─── */
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    opacity: 0;
+    animation: slideUp 0.5s ease 0.5s forwards;
+  }
+  .summary-stat {
+    text-align: center;
+    padding: 18px 12px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    backdrop-filter: blur(12px);
+  }
+  .summary-stat .stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 4px;
+  }
+  .summary-stat .stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .summary-stat:nth-child(1) .stat-value { color: var(--amber); }
+  .summary-stat:nth-child(2) .stat-value { color: var(--cyan); }
+  .summary-stat:nth-child(3) .stat-value { color: var(--emerald); }
+  .summary-stat:nth-child(4) .stat-value { color: var(--purple); }
+
+  /* ─── Campaign Cards ─── */
+  .campaigns {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .campaign-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 22px;
+    backdrop-filter: blur(12px);
+    position: relative;
+    overflow: hidden;
+    opacity: 0;
+  }
+  .campaign-card:nth-child(1) { animation: slideUp 0.5s ease 0.8s forwards; }
+  .campaign-card:nth-child(2) { animation: slideUp 0.5s ease 1.0s forwards; }
+  .campaign-card:nth-child(3) { animation: slideUp 0.5s ease 1.2s forwards; }
+
+  .campaign-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+  }
+  .campaign-card:nth-child(1)::before { background: linear-gradient(90deg, transparent, var(--emerald), transparent); }
+  .campaign-card:nth-child(2)::before { background: linear-gradient(90deg, transparent, var(--cyan), transparent); }
+  .campaign-card:nth-child(3)::before { background: linear-gradient(90deg, transparent, var(--purple), transparent); }
+
+  .campaign-name {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .campaign-card:nth-child(1) .campaign-name { color: var(--emerald); }
+  .campaign-card:nth-child(2) .campaign-name { color: var(--cyan); }
+  .campaign-card:nth-child(3) .campaign-name { color: var(--purple); }
+
+  .campaign-budget {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 16px;
+  }
+
+  .campaign-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .metric {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .metric-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .metric-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .metric-value {
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+  }
+  .metric-bar {
+    height: 4px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+  .metric-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    width: 0;
+    transition: width 1.2s cubic-bezier(0.34, 1, 0.64, 1);
+  }
+
+  .campaign-roas {
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--glass);
+    border-radius: 10px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.04);
+  }
+  .campaign-roas .roas-value {
+    font-size: 28px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1;
+  }
+  .campaign-card:nth-child(1) .roas-value { color: var(--emerald); }
+  .campaign-card:nth-child(2) .roas-value { color: var(--cyan); }
+  .campaign-card:nth-child(3) .roas-value { color: var(--purple); }
+
+  .campaign-roas .roas-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  /* ─── Keyframes ─── */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+</style>
+</head>
+<body>
+
+<div class="dashboard">
+  <div class="diagram-title"><span>Campaign Results</span> &mdash; Live Performance Dashboard</div>
+
+  <!-- Hero ROAS -->
+  <div class="hero-roas">
+    <div class="label">Total Return on Ad Spend</div>
+    <div class="value" id="heroRoas">0.00x</div>
+    <div class="subtitle">Every <strong>$1</strong> spent returned <strong>$18.74</strong> in revenue</div>
+  </div>
+
+  <!-- Summary Stats -->
+  <div class="summary-row">
+    <div class="summary-stat">
+      <div class="stat-value" id="totalBudget">$0</div>
+      <div class="stat-label">Total Budget</div>
+    </div>
+    <div class="summary-stat">
+      <div class="stat-value" id="totalClicks">0</div>
+      <div class="stat-label">Total Clicks</div>
+    </div>
+    <div class="summary-stat">
+      <div class="stat-value" id="totalConversions">0</div>
+      <div class="stat-label">Conversions</div>
+    </div>
+    <div class="summary-stat">
+      <div class="stat-value" id="totalRevenue">$0</div>
+      <div class="stat-label">Total Revenue</div>
+    </div>
+  </div>
+
+  <!-- Campaign Cards -->
+  <div class="campaigns">
+    <!-- Quick Win -->
+    <div class="campaign-card">
+      <div class="campaign-name">Quick Win</div>
+      <div class="campaign-budget">Budget: $50</div>
+      <div class="campaign-metrics">
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Clicks</span>
+            <span class="metric-value">91</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="91" style="background: var(--emerald);"></div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Conversions</span>
+            <span class="metric-value">40</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="50" style="background: var(--emerald);"></div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Revenue</span>
+            <span class="metric-value">$1,144</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="61" style="background: var(--emerald);"></div>
+          </div>
+        </div>
+      </div>
+      <div class="campaign-roas">
+        <div class="roas-value">22.88x</div>
+        <div class="roas-label">ROAS</div>
+      </div>
+    </div>
+
+    <!-- Value Bundle -->
+    <div class="campaign-card">
+      <div class="campaign-name">Value Bundle</div>
+      <div class="campaign-budget">Budget: $30</div>
+      <div class="campaign-metrics">
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Clicks</span>
+            <span class="metric-value">56</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="56" style="background: var(--cyan);"></div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Conversions</span>
+            <span class="metric-value">25</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="31" style="background: var(--cyan);"></div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Revenue</span>
+            <span class="metric-value">$472</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="25" style="background: var(--cyan);"></div>
+          </div>
+        </div>
+      </div>
+      <div class="campaign-roas">
+        <div class="roas-value">15.75x</div>
+        <div class="roas-label">ROAS</div>
+      </div>
+    </div>
+
+    <!-- Premium Push -->
+    <div class="campaign-card">
+      <div class="campaign-name">Premium Push</div>
+      <div class="campaign-budget">Budget: $20</div>
+      <div class="campaign-metrics">
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Clicks</span>
+            <span class="metric-value">36</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="36" style="background: var(--purple);"></div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Conversions</span>
+            <span class="metric-value">15</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="19" style="background: var(--purple);"></div>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="metric-header">
+            <span class="metric-label">Revenue</span>
+            <span class="metric-value">$257</span>
+          </div>
+          <div class="metric-bar">
+            <div class="metric-bar-fill" data-width="14" style="background: var(--purple);"></div>
+          </div>
+        </div>
+      </div>
+      <div class="campaign-roas">
+        <div class="roas-value">12.88x</div>
+        <div class="roas-label">ROAS</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Animate counter values
+  function animateCounter(el, target, prefix, suffix, duration) {
+    const start = performance.now();
+    const step = (now) => {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+      const current = Math.round(target * eased);
+      if (prefix === '$') {
+        el.textContent = '$' + current.toLocaleString() + suffix;
+      } else {
+        el.textContent = prefix + current.toLocaleString() + suffix;
+      }
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function animateRoas(el, target, duration) {
+    const start = performance.now();
+    const step = (now) => {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = (target * eased).toFixed(2);
+      el.textContent = current + 'x';
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Start animations after page load
+  setTimeout(() => {
+    animateRoas(document.getElementById('heroRoas'), 18.74, 2000);
+    animateCounter(document.getElementById('totalBudget'), 100, '$', '', 1500);
+    animateCounter(document.getElementById('totalClicks'), 183, '', '', 1500);
+    animateCounter(document.getElementById('totalConversions'), 80, '', '', 1500);
+    animateCounter(document.getElementById('totalRevenue'), 1874, '$', '', 1500);
+
+    // Animate bar fills
+    document.querySelectorAll('.metric-bar-fill').forEach(bar => {
+      const width = bar.getAttribute('data-width');
+      bar.style.width = width + '%';
+    });
+  }, 800);
+</script>
+
+</body>
+</html>

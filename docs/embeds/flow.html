@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ad-Commerce End-to-End Flow</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06060f;
+    --bg-grid: rgba(99, 102, 241, 0.03);
+    --card-bg: rgba(15, 15, 35, 0.85);
+    --card-border: rgba(99, 102, 241, 0.12);
+    --glass: rgba(255, 255, 255, 0.03);
+    --purple: #6366f1;
+    --cyan: #06b6d4;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+    --blue: #3b82f6;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 40px 20px;
+    overflow-x: hidden;
+    background-image:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .flow-diagram {
+    width: 100%;
+    max-width: 960px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .diagram-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 36px;
+    opacity: 0;
+    animation: fadeIn 0.6s ease forwards;
+  }
+  .diagram-title span { color: var(--purple); }
+
+  /* ─── Flow Rows ─── */
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ─── Step Card ─── */
+  .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 140px;
+    flex-shrink: 0;
+    opacity: 0;
+  }
+  .step-bubble {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    position: relative;
+    border: 1.5px solid var(--card-border);
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    transition: transform 0.3s, box-shadow 0.3s;
+  }
+  .step:hover .step-bubble {
+    transform: translateY(-3px);
+  }
+  .step-number {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+  }
+  .step-name {
+    margin-top: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .step-desc {
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-align: center;
+    line-height: 1.4;
+    max-width: 120px;
+  }
+
+  /* ─── Step Colors ─── */
+  .step[data-color="purple"] .step-bubble { border-color: rgba(99,102,241,0.3); box-shadow: 0 0 20px rgba(99,102,241,0.08); }
+  .step[data-color="purple"] .step-number { background: var(--purple); }
+  .step[data-color="purple"] .step-name { color: var(--purple); }
+  .step[data-color="purple"]:hover .step-bubble { box-shadow: 0 0 28px rgba(99,102,241,0.2); }
+
+  .step[data-color="amber"] .step-bubble { border-color: rgba(245,158,11,0.3); box-shadow: 0 0 20px rgba(245,158,11,0.08); }
+  .step[data-color="amber"] .step-number { background: var(--amber); }
+  .step[data-color="amber"] .step-name { color: var(--amber); }
+  .step[data-color="amber"]:hover .step-bubble { box-shadow: 0 0 28px rgba(245,158,11,0.2); }
+
+  .step[data-color="cyan"] .step-bubble { border-color: rgba(6,182,212,0.3); box-shadow: 0 0 20px rgba(6,182,212,0.08); }
+  .step[data-color="cyan"] .step-number { background: var(--cyan); }
+  .step[data-color="cyan"] .step-name { color: var(--cyan); }
+  .step[data-color="cyan"]:hover .step-bubble { box-shadow: 0 0 28px rgba(6,182,212,0.2); }
+
+  .step[data-color="blue"] .step-bubble { border-color: rgba(59,130,246,0.3); box-shadow: 0 0 20px rgba(59,130,246,0.08); }
+  .step[data-color="blue"] .step-number { background: var(--blue); }
+  .step[data-color="blue"] .step-name { color: var(--blue); }
+  .step[data-color="blue"]:hover .step-bubble { box-shadow: 0 0 28px rgba(59,130,246,0.2); }
+
+  .step[data-color="emerald"] .step-bubble { border-color: rgba(16,185,129,0.3); box-shadow: 0 0 20px rgba(16,185,129,0.08); }
+  .step[data-color="emerald"] .step-number { background: var(--emerald); }
+  .step[data-color="emerald"] .step-name { color: var(--emerald); }
+  .step[data-color="emerald"]:hover .step-bubble { box-shadow: 0 0 28px rgba(16,185,129,0.2); }
+
+  .step[data-color="rose"] .step-bubble { border-color: rgba(244,63,94,0.3); box-shadow: 0 0 20px rgba(244,63,94,0.08); }
+  .step[data-color="rose"] .step-number { background: var(--rose); }
+  .step[data-color="rose"] .step-name { color: var(--rose); }
+  .step[data-color="rose"]:hover .step-bubble { box-shadow: 0 0 28px rgba(244,63,94,0.2); }
+
+  /* ─── Arrows ─── */
+  .arrow-h {
+    width: 32px;
+    height: 2px;
+    position: relative;
+    flex-shrink: 0;
+    opacity: 0;
+  }
+  .arrow-h::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 8px;
+    height: 2px;
+    border-radius: 1px;
+  }
+  .arrow-h::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+  }
+  .arrow-h.right::before {
+    background: linear-gradient(to right, var(--card-border), var(--text-dim));
+  }
+  .arrow-h.right::after {
+    right: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-left: 6px solid var(--text-dim);
+  }
+  .arrow-h.left::before {
+    background: linear-gradient(to left, var(--card-border), var(--text-dim));
+  }
+  .arrow-h.left::after {
+    left: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-right: 6px solid var(--text-dim);
+  }
+
+  /* ─── Turn connector ─── */
+  .turn-connector {
+    width: 100%;
+    max-width: 880px;
+    height: 60px;
+    position: relative;
+    opacity: 0;
+  }
+  .turn-connector svg {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .turn-line {
+    fill: none;
+    stroke: var(--text-dim);
+    stroke-width: 1.5;
+    stroke-dasharray: 6 4;
+    stroke-dashoffset: 0;
+    animation: dashFlow 1.5s linear infinite;
+  }
+  .turn-arrow {
+    fill: var(--text-dim);
+  }
+
+  /* ─── Staggered animations ─── */
+  .step:nth-child(1) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s forwards; }
+  .flow-row:first-child .arrow-h:nth-of-type(1) { animation: fadeIn 0.3s ease 0.5s forwards; }
+  .step:nth-child(3) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.6s forwards; }
+  .flow-row:first-child .arrow-h:nth-of-type(2) { animation: fadeIn 0.3s ease 0.8s forwards; }
+  .step:nth-child(5) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.9s forwards; }
+  .flow-row:first-child .arrow-h:nth-of-type(3) { animation: fadeIn 0.3s ease 1.1s forwards; }
+  .step:nth-child(7) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 1.2s forwards; }
+  .flow-row:first-child .arrow-h:nth-of-type(4) { animation: fadeIn 0.3s ease 1.4s forwards; }
+  .step:nth-child(9) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 1.5s forwards; }
+
+  .turn-connector { animation: fadeIn 0.4s ease 1.7s forwards; }
+
+  .flow-row:last-child .step:nth-child(1) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 1.9s forwards; }
+  .flow-row:last-child .arrow-h:nth-of-type(1) { animation: fadeIn 0.3s ease 2.1s forwards; }
+  .flow-row:last-child .step:nth-child(3) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 2.2s forwards; }
+  .flow-row:last-child .arrow-h:nth-of-type(2) { animation: fadeIn 0.3s ease 2.4s forwards; }
+  .flow-row:last-child .step:nth-child(5) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 2.5s forwards; }
+  .flow-row:last-child .arrow-h:nth-of-type(3) { animation: fadeIn 0.3s ease 2.7s forwards; }
+  .flow-row:last-child .step:nth-child(7) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 2.8s forwards; }
+  .flow-row:last-child .arrow-h:nth-of-type(4) { animation: fadeIn 0.3s ease 3.0s forwards; }
+  .flow-row:last-child .step:nth-child(9) { animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 3.1s forwards; }
+
+  /* ─── Keyframes ─── */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes popIn {
+    from { opacity: 0; transform: scale(0.7); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @keyframes dashFlow { to { stroke-dashoffset: -20; } }
+</style>
+</head>
+<body>
+
+<div class="flow-diagram">
+  <div class="diagram-title"><span>End-to-End Flow</span> &mdash; From Ad to Attribution</div>
+
+  <!-- Top Row: Steps 1-5 (left to right) -->
+  <div class="flow-row">
+    <div class="step" data-color="purple">
+      <div class="step-bubble">
+        &#128161;
+        <div class="step-number">1</div>
+      </div>
+      <div class="step-name">Plan</div>
+      <div class="step-desc">Agent analyzes products &amp; budget</div>
+    </div>
+    <div class="arrow-h right"></div>
+    <div class="step" data-color="amber">
+      <div class="step-bubble">
+        &#128176;
+        <div class="step-number">2</div>
+      </div>
+      <div class="step-name">Buy</div>
+      <div class="step-desc">AdCP creates media buy</div>
+    </div>
+    <div class="arrow-h right"></div>
+    <div class="step" data-color="cyan">
+      <div class="step-bubble">
+        &#128250;
+        <div class="step-number">3</div>
+      </div>
+      <div class="step-name">Serve</div>
+      <div class="step-desc">Ads display creative to audience</div>
+    </div>
+    <div class="arrow-h right"></div>
+    <div class="step" data-color="blue">
+      <div class="step-bubble">
+        &#128433;&#65039;
+        <div class="step-number">4</div>
+      </div>
+      <div class="step-name">Click</div>
+      <div class="step-desc">Agent records click with UUID</div>
+    </div>
+    <div class="arrow-h right"></div>
+    <div class="step" data-color="emerald">
+      <div class="step-bubble">
+        &#128722;
+        <div class="step-number">5</div>
+      </div>
+      <div class="step-name">Cart</div>
+      <div class="step-desc">ACP checkout session created</div>
+    </div>
+  </div>
+
+  <!-- U-Turn Connector -->
+  <div class="turn-connector">
+    <svg viewBox="0 0 960 60" preserveAspectRatio="xMidYMid meet">
+      <path d="M 810 0 C 810 40, 810 40, 810 40 L 150 40" class="turn-line" />
+      <polygon points="150,36 142,40 150,44" class="turn-arrow" />
+    </svg>
+  </div>
+
+  <!-- Bottom Row: Steps 10-6 (left to right, representing 10←9←8←7←6) -->
+  <div class="flow-row">
+    <div class="step" data-color="purple">
+      <div class="step-bubble">
+        &#128200;
+        <div class="step-number">10</div>
+      </div>
+      <div class="step-name">Report</div>
+      <div class="step-desc">Campaign results: 18.74x ROAS</div>
+    </div>
+    <div class="arrow-h left"></div>
+    <div class="step" data-color="emerald">
+      <div class="step-bubble">
+        &#128178;
+        <div class="step-number">9</div>
+      </div>
+      <div class="step-name">ROAS</div>
+      <div class="step-desc">Calculate revenue vs. spend</div>
+    </div>
+    <div class="arrow-h left"></div>
+    <div class="step" data-color="cyan">
+      <div class="step-bubble">
+        &#127919;
+        <div class="step-number">8</div>
+      </div>
+      <div class="step-name">Attribute</div>
+      <div class="step-desc">Record click → conversion</div>
+    </div>
+    <div class="arrow-h left"></div>
+    <div class="step" data-color="amber">
+      <div class="step-bubble">
+        &#128276;
+        <div class="step-number">7</div>
+      </div>
+      <div class="step-name">Webhook</div>
+      <div class="step-desc">ACP notifies agent</div>
+    </div>
+    <div class="arrow-h left"></div>
+    <div class="step" data-color="rose">
+      <div class="step-bubble">
+        &#128179;
+        <div class="step-number">6</div>
+      </div>
+      <div class="step-name">Pay</div>
+      <div class="step-desc">User completes purchase</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
